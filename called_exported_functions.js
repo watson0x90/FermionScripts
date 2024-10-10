@@ -1,14 +1,14 @@
 // Check for exported functions called by an EXE.
 
-dllName = "example.dll"
+let dllName = "example.dll";
 
 let dllModule = Process.findModuleByName(dllName);
 
 if (dllName) {
-    send("[+] " + dllName + " is loaded at base address: " + dllName.base);
+    send("[+] " + dllName + " is loaded at base address: " + dllModule.base);
 
     // Enumerate all exported functions from the DLL using the correct method on the module object
-    let exports = dllName.enumerateExports();
+    let exports = dllModule.enumerateExports();
 
     send("[+] Hooking exported functions from "+dllName+":");
     
