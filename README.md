@@ -11,3 +11,4 @@ These are a collection of Fermion Scripts that I have found helpful while perfor
 - https://github.com/frida/frida
 - https://labs.calypso.pub/windows-instrumentation-with-frida
 - https://github.com/lymbin/frida-scripts/blob/master/frida-memory-dumper.py
+- https://github.com/FuzzySecurity/Fermion/blob/master/Examples
