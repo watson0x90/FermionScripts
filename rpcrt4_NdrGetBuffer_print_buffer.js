@@ -1,28 +1,25 @@
-// Utility function to convert an ArrayBuffer to a hex string and filtered ASCII JSON string
+// Utility function to convert an ArrayBuffer to a hex string and UTF-16LE JSON string
 function arrayBufferToHexAndJsonString(buffer) {
     // Convert buffer to hex string for full representation
     const hexString = Array.prototype.map.call(new Uint8Array(buffer), byte => ('00' + byte.toString(16)).slice(-2)).join(' ');
 
-    // Convert buffer to ASCII string, filtering only printable characters
-    let asciiString = Array.prototype.map.call(new Uint8Array(buffer), byte => {
-        return byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : ''; // Include printable characters only
-    }).join('').replace(/\x00/g, ''); // Remove any remaining null bytes
+    // Interpret the buffer as a UTF-16LE string
+    const utf16String = String.fromCharCode.apply(null, new Uint16Array(buffer));
 
-    // Find JSON block by locating the first `{` character and extracting from there
-    const jsonStartIndex = asciiString.indexOf('{');
+    // Locate and extract JSON block if present
+    const jsonStartIndex = utf16String.indexOf('{');
+    let jsonContent;
     if (jsonStartIndex !== -1) {
         // Extract JSON substring starting at the first '{' character
-        asciiString = asciiString.slice(jsonStartIndex);
+        jsonContent = utf16String.slice(jsonStartIndex).replace(/\x00/g, ''); // Remove null characters
     } else {
-        // If `{` not found, log a message and keep the full ASCII content
-        asciiString = "JSON block not found. ASCII content: " + asciiString;
+        jsonContent = "JSON block not found. UTF-16LE content: " + utf16String;
     }
 
-    return { hex: hexString, ascii: asciiString };
+    return { hex: hexString, ascii: jsonContent };
 }
 
-
-function interceptNdrGetBuffer(printHex){
+function interceptNdrGetBuffer(printHex) {
     const ndrGetBuffer = Module.findExportByName('rpcrt4.dll', 'NdrGetBuffer');
     if (ndrGetBuffer !== null) {
         Interceptor.attach(ndrGetBuffer, {
@@ -49,15 +46,15 @@ function interceptNdrGetBuffer(printHex){
                     const fBufferValid = pStubMsg.add(0x9C).readU8();
                     send(`Buffer Validity Flag (fBufferValid): ${fBufferValid ? 'Set' : 'Not Set'}\n`);
 
-                    // Log the buffer content in both hex and extracted JSON ASCII
+                    // Log the buffer content in both hex and extracted JSON ASCII (interpreted as UTF-16LE)
                     if (!bufferPointer.isNull() && actualBufferLength > 0 && actualBufferLength < 0x10000) {
                         const bufferContent = bufferPointer.readByteArray(actualBufferLength);
                         if (bufferContent) {
                             const { hex, ascii } = arrayBufferToHexAndJsonString(bufferContent);
-                            if(printHex){
+                            if (printHex) {
                                 send(`[## - NdrGetBuffer] Buffer Content (HEX) (${actualBufferLength} bytes):\n${hex}\n`);
-                            }                            
-                            send(`[## - NdrGetBuffer] Buffer Content (ASCII) (${actualBufferLength} bytes):\n${ascii}\n`);
+                            }
+                            send(`[## - NdrGetBuffer] Buffer Content (ASCII as UTF-16LE JSON) (${actualBufferLength} bytes):\n${ascii}\n`);
                         }
                     }
                 } catch (error) {
@@ -68,7 +65,6 @@ function interceptNdrGetBuffer(printHex){
     } else {
         send("[!] Error: NdrGetBuffer not found in rpcrt4.dll.");
     }
-
 }
 
 /**
