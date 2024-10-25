@@ -1,4 +1,4 @@
-// Utility function to convert an ArrayBuffer to a hex string and UTF-16LE JSON string
+// Utility function to convert an ArrayBuffer to a hex string and UTF-16LE ASCII string, always returning UTF-16LE content
 function arrayBufferToHexAndJsonString(buffer) {
     // Convert buffer to hex string for full representation
     const hexString = Array.prototype.map.call(new Uint8Array(buffer), byte => ('00' + byte.toString(16)).slice(-2)).join(' ');
@@ -6,18 +6,20 @@ function arrayBufferToHexAndJsonString(buffer) {
     // Interpret the buffer as a UTF-16LE string
     const utf16String = String.fromCharCode.apply(null, new Uint16Array(buffer));
 
-    // Locate and extract JSON block if present
+    // Locate JSON block if present
     const jsonStartIndex = utf16String.indexOf('{');
     let jsonContent;
     if (jsonStartIndex !== -1) {
         // Extract JSON substring starting at the first '{' character
         jsonContent = utf16String.slice(jsonStartIndex).replace(/\x00/g, ''); // Remove null characters
     } else {
-        jsonContent = "JSON block not found. UTF-16LE content: " + utf16String;
+        // If no JSON, print UTF-16LE content directly
+        jsonContent = utf16String.replace(/\x00/g, ''); // Remove null characters for display
     }
 
     return { hex: hexString, ascii: jsonContent };
 }
+
 
 function interceptNdrGetBuffer(printHex) {
     const ndrGetBuffer = Module.findExportByName('rpcrt4.dll', 'NdrGetBuffer');
@@ -70,4 +72,4 @@ function interceptNdrGetBuffer(printHex) {
 /**
  * @param {bool} - print hex chars
  */
-interceptNdrGetBuffer(false);
+interceptNdrGetBuffer(true);
