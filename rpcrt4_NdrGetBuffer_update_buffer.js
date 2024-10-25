@@ -16,46 +16,70 @@ function arrayBufferToHexAndJsonString(buffer) {
     return { hex: hexString, ascii: asciiString };
 }
 
-// Function to modify multiple JSON fields in the buffer
-function modifyBufferFields(bufferPointer, bufferLength, fieldUpdates) {
+// Updated function to modify JSON fields, re-encode to UTF-16LE, and update buffer length
+function modifyBufferFields(bufferPointer, bufferLength, fieldUpdates, pStubMsg) {
     const bufferContent = bufferPointer.readByteArray(bufferLength);
     if (!bufferContent) return;
 
-    const { ascii: jsonContent } = arrayBufferToHexAndJsonString(bufferContent);
-    try {
-        const jsonObject = JSON.parse(jsonContent); // Parse JSON content
+    const { ascii: asciiContent } = arrayBufferToHexAndJsonString(bufferContent);
 
-        // Loop through each field and update if it exists
+    // Locate JSON block in ASCII content
+    const jsonStartIndex = asciiContent.indexOf('{');
+    const jsonEndIndex = asciiContent.lastIndexOf('}') + 1;
+
+    if (jsonStartIndex === -1 || jsonEndIndex === -1) {
+        send("[!] JSON block not found in buffer content.");
+        return;
+    }
+
+    const originalJson = asciiContent.slice(jsonStartIndex, jsonEndIndex);
+    let modifiedJson = originalJson;
+
+    try {
+        const jsonObject = JSON.parse(originalJson);
+
+        let modificationMade = false;
         for (const [fieldName, newValue] of Object.entries(fieldUpdates)) {
             if (fieldName in jsonObject) {
                 send(`[## - Pre-Modification] Original field "${fieldName}": ${jsonObject[fieldName]}`);
-                jsonObject[fieldName] = newValue; // Update the field with the new value
+                jsonObject[fieldName] = newValue;
+                modificationMade = true;
             } else {
                 send(`[!] Warning: Field "${fieldName}" not found in JSON content.`);
             }
         }
 
-        // Convert updated JSON object back to a string and to UTF-8 bytes
-        const updatedJsonString = JSON.stringify(jsonObject);
-        const updatedBuffer = Memory.allocUtf8String(updatedJsonString);
+        if (modificationMade) {
+            modifiedJson = JSON.stringify(jsonObject);
 
-        // Verify if the updated content fits within the original buffer
-        const newLength = updatedJsonString.length;
-        if (newLength <= bufferLength) {
-            bufferPointer.writeByteArray(updatedBuffer.readByteArray(newLength));
-            send(`[## - Post-Modification] Updated fields in JSON`);
+            // Convert modified JSON to UTF-16LE
+            const utf16EncodedBuffer = [];
+            for (const char of modifiedJson) {
+                utf16EncodedBuffer.push(char.charCodeAt(0) & 0xFF, (char.charCodeAt(0) >> 8) & 0xFF);
+            }
+            utf16EncodedBuffer.push(0x00, 0x00); // Null terminator for UTF-16LE
 
-            // Verification step: Read back the buffer and confirm change
-            const verifyContent = bufferPointer.readByteArray(newLength);
-            const { ascii: verifyAscii } = arrayBufferToHexAndJsonString(verifyContent);
-            send(`[## - Verification] Modified Buffer Content:\n${verifyAscii}`);
+            // Write back to buffer
+            bufferPointer.writeByteArray(new Uint8Array(utf16EncodedBuffer));
+
+            // Calculate and update the new buffer length in the structure
+            const newBufferLength = utf16EncodedBuffer.length;
+            pStubMsg.add(0x2C).writeU32(newBufferLength);
+            send(`[## - Post-Modification] JSON modified. New Buffer Length set to ${newBufferLength} bytes (Hex: 0x${newBufferLength.toString(16)})`);
+
+            // Verification step
+            const verifyContent = bufferPointer.readByteArray(newBufferLength);
+            const { hex: verifyHex, ascii: verifyAscii } = arrayBufferToHexAndJsonString(verifyContent);
+            send(`[## - Verification] Modified Buffer Content (Hex):\n${verifyHex}`);
+            send(`[## - Verification] Modified Buffer Content (ASCII):\n${verifyAscii}`);
         } else {
-            send(`[!] Warning: Modified JSON length (${newLength} bytes) exceeds original buffer length (${bufferLength} bytes), modification skipped.`);
+            send("[##] No modifications were made to the JSON buffer.");
         }
     } catch (error) {
         send(`[!] Error parsing or modifying JSON: ${error.message}`);
     }
 }
+
 
 // Hook the NdrGetBuffer function and modify buffer if conditions match
 function interceptAndModifyNdrGetBuffer(fieldUpdates) {
@@ -74,7 +98,7 @@ function interceptAndModifyNdrGetBuffer(fieldUpdates) {
                     send(`Actual Buffer Length: ${actualBufferLength} bytes`);
 
                     if (bufferPointer && actualBufferLength > 0) {
-                        modifyBufferFields(bufferPointer, actualBufferLength, fieldUpdates);
+                        modifyBufferFields(bufferPointer, actualBufferLength, fieldUpdates, pStubMsg);
                     }
                 } catch (error) {
                     send("[!] Error accessing or modifying buffer in NdrGetBuffer: " + error.message);
