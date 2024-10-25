@@ -1,29 +1,30 @@
-// Utility function to convert an ArrayBuffer to a hex string and extract JSON block
+// Utility function to convert an ArrayBuffer to a UTF-16LE ASCII string and extract JSON block
 function arrayBufferToHexAndJsonString(buffer) {
     const hexString = Array.prototype.map.call(new Uint8Array(buffer), byte => ('00' + byte.toString(16)).slice(-2)).join(' ');
 
-    let asciiString = Array.prototype.map.call(new Uint8Array(buffer), byte => {
-        return byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : ''; // Include printable characters only
-    }).join('').replace(/\x00/g, ''); // Remove null bytes
+    // Convert buffer to a UTF-16LE string to interpret it correctly
+    const utf16String = String.fromCharCode.apply(null, new Uint16Array(buffer));
 
-    const jsonStartIndex = asciiString.indexOf('{');
+    // Extract JSON content
+    const jsonStartIndex = utf16String.indexOf('{');
+    let jsonContent;
     if (jsonStartIndex !== -1) {
-        asciiString = asciiString.slice(jsonStartIndex);
+        jsonContent = utf16String.slice(jsonStartIndex).replace(/\x00/g, ''); // Remove null characters
     } else {
-        asciiString = "JSON block not found. ASCII content: " + asciiString;
+        jsonContent = "JSON block not found. UTF-16LE content: " + utf16String;
     }
 
-    return { hex: hexString, ascii: asciiString };
+    return { hex: hexString, ascii: jsonContent };
 }
 
-// Updated function to modify JSON fields, re-encode to UTF-16LE, and update buffer length
+// Function to modify JSON fields in UTF-16LE buffer without re-encoding
 function modifyBufferFields(bufferPointer, bufferLength, fieldUpdates, pStubMsg) {
     const bufferContent = bufferPointer.readByteArray(bufferLength);
     if (!bufferContent) return;
 
     const { ascii: asciiContent } = arrayBufferToHexAndJsonString(bufferContent);
 
-    // Locate JSON block in ASCII content
+    // Locate JSON block in UTF-16LE content
     const jsonStartIndex = asciiContent.indexOf('{');
     const jsonEndIndex = asciiContent.lastIndexOf('}') + 1;
 
@@ -52,18 +53,17 @@ function modifyBufferFields(bufferPointer, bufferLength, fieldUpdates, pStubMsg)
         if (modificationMade) {
             modifiedJson = JSON.stringify(jsonObject);
 
-            // Convert modified JSON to UTF-16LE
-            const utf16EncodedBuffer = [];
-            for (const char of modifiedJson) {
-                utf16EncodedBuffer.push(char.charCodeAt(0) & 0xFF, (char.charCodeAt(0) >> 8) & 0xFF);
+            // Write modified JSON back to buffer directly as UTF-16LE
+            const utf16EncodedBuffer = new Uint16Array(modifiedJson.length + 1); // +1 for null terminator
+            for (let i = 0; i < modifiedJson.length; i++) {
+                utf16EncodedBuffer[i] = modifiedJson.charCodeAt(i);
             }
-            utf16EncodedBuffer.push(0x00, 0x00); // Null terminator for UTF-16LE
+            utf16EncodedBuffer[modifiedJson.length] = 0x0000; // Null terminator
 
-            // Write back to buffer
-            bufferPointer.writeByteArray(new Uint8Array(utf16EncodedBuffer));
+            bufferPointer.writeByteArray(new Uint8Array(utf16EncodedBuffer.buffer));
 
             // Calculate and update the new buffer length in the structure
-            const newBufferLength = utf16EncodedBuffer.length;
+            const newBufferLength = utf16EncodedBuffer.byteLength;
             pStubMsg.add(0x2C).writeU32(newBufferLength);
             send(`[## - Post-Modification] JSON modified. New Buffer Length set to ${newBufferLength} bytes (Hex: 0x${newBufferLength.toString(16)})`);
 
@@ -79,7 +79,6 @@ function modifyBufferFields(bufferPointer, bufferLength, fieldUpdates, pStubMsg)
         send(`[!] Error parsing or modifying JSON: ${error.message}`);
     }
 }
-
 
 // Hook the NdrGetBuffer function and modify buffer if conditions match
 function interceptAndModifyNdrGetBuffer(fieldUpdates) {
